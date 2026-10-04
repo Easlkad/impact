@@ -382,6 +382,9 @@ func (s *scanner) collectDecls() {
 				case *ast.FuncDecl:
 					s.addFunc(fi, d)
 				case *ast.GenDecl:
+					if d.Tok != token.IMPORT {
+						fi.model.Declarations = append(fi.model.Declarations, s.declaration(fi, d, d.Doc))
+					}
 					if d.Tok == token.TYPE {
 						for _, spec := range d.Specs {
 							s.addType(fi, spec.(*ast.TypeSpec))
@@ -410,15 +413,7 @@ func (s *scanner) addFunc(fi *fileInfo, d *ast.FuncDecl) {
 		p.inits++
 	}
 
-	start := d.Pos()
-	if d.Doc != nil {
-		start = d.Doc.Pos()
-	}
-	loc := model.Declaration{
-		File:      fi.model.Path,
-		StartLine: s.fset.Position(start).Line,
-		EndLine:   s.fset.Position(d.End()).Line,
-	}
+	loc := s.declaration(fi, d, d.Doc)
 
 	// The same function may be declared in several files guarded by build
 	// constraints (foo_linux.go, foo_windows.go). To callers they are one
@@ -444,6 +439,19 @@ func (s *scanner) addFunc(fi *fileInfo, d *ast.FuncDecl) {
 	}
 	fn.Declarations = append(fn.Declarations, loc)
 	fi.funcs = append(fi.funcs, funcDecl{decl: d, fn: fn})
+}
+
+// declaration returns the lines of a declaration, its doc comment included.
+func (s *scanner) declaration(fi *fileInfo, n ast.Node, doc *ast.CommentGroup) model.Declaration {
+	start := n.Pos()
+	if doc != nil {
+		start = doc.Pos()
+	}
+	return model.Declaration{
+		File:      fi.model.Path,
+		StartLine: s.fset.Position(start).Line,
+		EndLine:   s.fset.Position(n.End()).Line,
+	}
 }
 
 // receiverType returns the receiver type name of a method ("Service" for

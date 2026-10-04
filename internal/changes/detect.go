@@ -58,8 +58,9 @@ func (c LineChange) String() string {
 // deleted and added) when it moves to another file of the same package. A
 // function is only reported when its own lines changed: changes elsewhere in
 // its file do not count. Changed lines outside every function are returned
-// as LineChanges, except in added and deleted files, where every line is new
-// or gone anyway.
+// as LineChanges. In added and deleted files, where every line is new or
+// gone, only the package-level declarations (types, constants, variables)
+// are: deleting a file of constants still used elsewhere is a change too.
 func Detect(diff []gitdiff.File, base, head *model.Repository) ([]FunctionChange, []LineChange) {
 	headPath := make(map[string]string) // base path -> head path, for renamed files
 	for _, f := range diff {
@@ -108,7 +109,19 @@ func Detect(diff []gitdiff.File, base, head *model.Repository) ([]FunctionChange
 			}
 		}
 
-		if f.Status == gitdiff.Added || f.Status == gitdiff.Deleted {
+		// In added and deleted files every line is new or gone: only the
+		// declarations are reported, not the package clause, imports or
+		// comments, which affect nothing outside the file.
+		switch f.Status {
+		case gitdiff.Added:
+			for _, d := range headIdx.decls[f.NewPath] {
+				lines = append(lines, LineChange{File: f.NewPath, Start: d.StartLine, End: d.EndLine})
+			}
+			continue
+		case gitdiff.Deleted:
+			for _, d := range baseIdx.decls[f.OldPath] {
+				lines = append(lines, LineChange{File: f.OldPath, Start: d.StartLine, End: d.EndLine, Removed: true})
+			}
 			continue
 		}
 		for _, h := range f.Hunks {
@@ -154,9 +167,10 @@ type decl struct {
 }
 
 type index struct {
-	files map[string][]decl // by file path, in source order
-	keys  map[string]decl   // by key: the first declaration
-	known map[string]bool   // files present in the analysis
+	files map[string][]decl              // by file path, in source order
+	keys  map[string]decl                // by key: the first declaration
+	known map[string]bool                // files present in the analysis
+	decls map[string][]model.Declaration // package-level declarations other than functions, by file path
 }
 
 // newIndex indexes the function declarations of repo. headPath maps a file
@@ -167,10 +181,12 @@ func newIndex(repo *model.Repository, headPath func(string) string) *index {
 		files: make(map[string][]decl),
 		keys:  make(map[string]decl),
 		known: make(map[string]bool),
+		decls: make(map[string][]model.Declaration),
 	}
 	for _, p := range repo.Packages {
 		for _, f := range p.Files {
 			idx.known[f.Path] = true
+			idx.decls[f.Path] = f.Declarations
 		}
 	}
 	inits := make(map[string]int) // init functions seen per file

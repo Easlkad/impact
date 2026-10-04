@@ -255,8 +255,28 @@ func TestAddedAndDeletedFiles(t *testing.T) {
 		"added user/admin.go Admin.Promote",
 		"deleted user/legacy.go Legacy",
 	})
-	// The lines of added and deleted files are not package-level changes.
-	assertEqual(t, "package level", packageLevel(r), nil)
+	// In added and deleted files, only declarations are package-level
+	// changes: not the package clause, imports or comments.
+	assertEqual(t, "package level", packageLevel(r), []string{"user/admin.go:3"})
+}
+
+func TestDeclarationOnlyFiles(t *testing.T) {
+	base := map[string]string{
+		"go.mod":         goMod,
+		"user/user.go":   userGo,
+		"user/limits.go": "package user\n\nimport \"time\"\n\n// Limits.\nconst (\n\tMaxUsers = 10\n\tTimeout  = time.Second\n)\n\nvar ErrFull = errNotImplemented\n",
+	}
+	r := compareCommits(t, base, func(g *gittest.Repo) {
+		g.Remove("user/limits.go")
+		g.Write(map[string]string{"user/types.go": "// Package doc.\npackage user\n\ntype Role string\n"})
+	})
+	assertEqual(t, "files", files(r), []string{"deleted user/limits.go", "added user/types.go"})
+	assertEqual(t, "functions", functions(r), nil)
+	assertEqual(t, "package level", packageLevel(r), []string{
+		"user/limits.go:5-9 removed",
+		"user/limits.go:11 removed",
+		"user/types.go:4",
+	})
 }
 
 func TestFunctionMovedWithinPackage(t *testing.T) {

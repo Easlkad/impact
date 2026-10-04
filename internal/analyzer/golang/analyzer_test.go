@@ -400,6 +400,38 @@ func TestInitFunctionsGetUniqueIDs(t *testing.T) {
 	})
 }
 
+func TestPackageLevelDeclarations(t *testing.T) {
+	repo := analyze(t, map[string]string{
+		"go.mod": goMod,
+		"a.go": `package app
+
+import "fmt"
+
+// Limit is documented.
+const Limit = 3
+
+var (
+	a = 1
+	b = fmt.Sprint(a)
+)
+
+func F() {}
+
+type T struct{}
+`,
+	}, Options{})
+
+	got := repo.Packages[0].Files[0].Declarations
+	want := []model.Declaration{
+		{File: "a.go", StartLine: 5, EndLine: 6},
+		{File: "a.go", StartLine: 8, EndLine: 11},
+		{File: "a.go", StartLine: 15, EndLine: 15},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("declarations:\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
 func TestSkippedFilesAndDirectories(t *testing.T) {
 	files := map[string]string{
 		"go.mod":             goMod,

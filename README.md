@@ -116,8 +116,9 @@ Package-level changes:
 - **Added / deleted functions** exist in only one commit. Deleted functions
   are shown with their file and lines in the base commit.
 - **Package-level changes** are changed lines outside every function
-  (declarations, imports, comments). Blank lines are ignored, and so are the
-  lines of added or deleted files, which are new or gone as a whole.
+  (declarations, imports, comments). Blank lines are ignored. In added or
+  deleted files, which are new or gone as a whole, only the type, constant
+  and variable declarations are reported.
 
 Only `.go` files are considered, test files included. Flag: `-merge-base`
 (see [pull requests](#pull-requests-and---merge-base)).

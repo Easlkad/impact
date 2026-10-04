@@ -26,6 +26,10 @@ type File struct {
 	Path      string      // relative to the repository root, slash-separated
 	Package   string      // ID of the owning package
 	Functions []*Function // in source order
+	// Declarations are the package-level declarations other than functions
+	// and imports (types, constants, variables), in source order. For Go,
+	// one entry covers a whole "const ( ... )" block.
+	Declarations []Declaration
 }
 
 // Function is a function or method declaration.
