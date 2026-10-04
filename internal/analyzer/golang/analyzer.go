@@ -77,6 +77,8 @@ func AnalyzeFS(fsys fs.FS, rootPath string, opts Options) (*model.Repository, er
 		results:  make(map[string]typeRef),
 		types:    make(map[typeRef]*typeInfo),
 		vars:     make(map[string]typeRef),
+		globals:  make(map[string]bool),
+		aliases:  make(map[string]string),
 	}
 	s.seedKnownExternals()
 	if err := s.walk(); err != nil {
@@ -127,7 +129,8 @@ func rootImportPath(dir string) string {
 //  1. walk: find go.mod files and parse every .go file
 //  2. collectImports: map the import names of each file to import paths
 //  3. collectDecls: record functions, methods and types
-//  4. collectPackageVars: record the types of package-level variables
+//  4. collectPackageVars: record package-level variables, their types and
+//     the functions they always hold
 //  5. collectCalls: walk function bodies and resolve call expressions
 //
 // All paths are slash-separated and relative to the root of fsys.
@@ -142,6 +145,11 @@ type scanner struct {
 	results  map[string]typeRef         // type of a function's first result, by Function.ID
 	types    map[typeRef]*typeInfo      // every declared package-level type
 	vars     map[string]typeRef         // "<package ID>.<name>" of a package-level variable -> its type
+	globals  map[string]bool            // "<package ID>.<name>" of every package-level variable
+	// aliases maps a package-level variable that always holds the same
+	// function, as in "var hook = Save" never assigned again, to the
+	// Function.ID of that function.
+	aliases  map[string]string
 	warnings []string
 }
 
@@ -556,6 +564,10 @@ func (s *scanner) addType(fi *fileInfo, spec *ast.TypeSpec) {
 }
 
 func (s *scanner) collectPackageVars() {
+	assigned := s.assignedVars()
+	// Aliases are recorded at the end, so that whether one variable is an
+	// alias does not depend on the order in which the others are seen.
+	aliases := make(map[string]string)
 	for _, p := range s.sortedPackages() {
 		for _, fi := range p.files {
 			r := s.newResolver(fi, nil)
@@ -567,14 +579,68 @@ func (s *scanner) collectPackageVars() {
 				for _, spec := range d.Specs {
 					vs := spec.(*ast.ValueSpec)
 					for i, name := range vs.Names {
+						key := p.pkg.ID + "." + name.Name
+						s.globals[key] = true
 						if t := r.specType(vs, i); t.known() {
-							s.vars[p.pkg.ID+"."+name.Name] = t
+							s.vars[key] = t
+						}
+						if len(vs.Values) == len(vs.Names) && !assigned[key] {
+							if id, ok := r.funcValue(vs.Values[i]); ok {
+								aliases[key] = id
+							}
 						}
 					}
 				}
 			}
 		}
 	}
+	s.aliases = aliases
+}
+
+// assignedVars returns the "<package ID>.<name>" keys of the package-level
+// variables that may change after their initialization: assigned anywhere
+// in the repository, or whose address is taken. It errs on the side of
+// caution: a local variable of the same name, assigned in the package of
+// the variable, counts too.
+func (s *scanner) assignedVars() map[string]bool {
+	assigned := make(map[string]bool)
+	for _, p := range s.pkgs {
+		for _, fi := range p.files {
+			mark := func(e ast.Expr) {
+				switch e := ast.Unparen(e).(type) {
+				case *ast.Ident:
+					assigned[p.pkg.ID+"."+e.Name] = true
+				case *ast.SelectorExpr:
+					if x, ok := e.X.(*ast.Ident); ok {
+						if path, ok := fi.imports[x.Name]; ok {
+							assigned[path+"."+e.Sel.Name] = true
+						}
+					}
+				}
+			}
+			ast.Inspect(fi.syntax, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.AssignStmt:
+					if n.Tok != token.DEFINE { // := declares new variables
+						for _, lhs := range n.Lhs {
+							mark(lhs)
+						}
+					}
+				case *ast.RangeStmt:
+					if n.Tok == token.ASSIGN {
+						mark(n.Key)
+						mark(n.Value)
+					}
+				case *ast.UnaryExpr:
+					if n.Op == token.AND {
+						mark(n.X)
+					}
+				}
+				return true
+			})
+		}
+	}
+	return assigned
 }
 
 func (s *scanner) collectCalls() {

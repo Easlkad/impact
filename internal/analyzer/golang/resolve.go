@@ -16,9 +16,11 @@ package golang
 // wins, and an ambiguous selector stays unresolved.
 //
 // Local scopes are flattened per function: a name keeps the type from its
-// latest declaration even after its block ends. Calls that cannot be
-// resolved this way (function values, interface methods, results of
-// unresolved calls, ...) are recorded as unresolved rather than guessed.
+// latest declaration even after its block ends. A package-level variable
+// initialized with a function and never assigned again ("var hook = Save")
+// stands for that function. Calls that cannot be resolved this way
+// (function values, interface methods, results of unresolved calls, ...)
+// are recorded as unresolved rather than guessed.
 
 import (
 	"go/ast"
@@ -456,6 +458,12 @@ func (r *resolver) resolveIdent(name string) (model.Call, bool) {
 	if r.s.funcs[id] != nil {
 		return internal(id)
 	}
+	if fn, ok := r.s.aliases[id]; ok {
+		return internal(fn)
+	}
+	if r.s.globals[id] {
+		return unresolved(name, model.FunctionValue) // a package-level variable
+	}
 	if predeclared[name] || r.s.types[typeRef{pkg: r.pkg, name: name}] != nil {
 		return model.Call{}, false
 	}
@@ -469,10 +477,14 @@ func (r *resolver) resolveSelector(sel *ast.SelectorExpr) (model.Call, bool) {
 		switch {
 		case r.s.funcs[id] != nil:
 			return internal(id)
+		case r.s.aliases[id] != "":
+			return internal(r.s.aliases[id])
 		case r.s.pkgs[path] == nil:
 			return external(id)
 		case r.s.types[typeRef{pkg: path, name: name}] != nil:
 			return model.Call{}, false // conversion to an imported type
+		case r.s.globals[id]:
+			return unresolved(id, model.FunctionValue) // a package-level variable
 		}
 		return unresolved(id, model.UnknownTarget)
 	}

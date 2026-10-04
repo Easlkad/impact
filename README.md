@@ -529,7 +529,7 @@ not proof of safety.
 | callers of deleted functions with no counterpart in head               |    -8 |   -8 | -24 |
 | callers of deleted functions were mapped from the base commit          |    -5 |    0 |  -5 |
 | interface method calls with the name of an affected method             |    -4 |   -4 | -20 |
-| calls with unknown receivers with the name of an affected method       |    -3 |   -3 | -15 |
+| calls with unknown targets with the name of an affected function       |    -3 |   -3 | -15 |
 | calls through function values in affected packages                     |    -2 |   -2 | -10 |
 | route registrations in affected code that are not fully resolved       |    -5 |   -5 | -15 |
 | package-level changes (their users are not analyzed)                   |    -6 |   -2 | -12 |

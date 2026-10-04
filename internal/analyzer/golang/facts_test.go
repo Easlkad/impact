@@ -259,6 +259,88 @@ func (S) TestMethod(t *testing.T) {}
 	})
 }
 
+// TestPackageLevelFunctionVariables checks calls through package-level
+// variables: one that always holds the same function is that function;
+// the others are function values.
+func TestPackageLevelFunctionVariables(t *testing.T) {
+	repo := analyze(t, map[string]string{
+		"go.mod": goMod,
+		"app/app.go": `package app
+
+var callback = Changed // never assigned again
+
+var hook = Changed // assigned in SetHook
+
+var handler func()
+
+var hooks = []func(){Changed}
+
+var addr = Changed // its address escapes
+
+var Kept = Changed
+
+var Swapped = Changed // assigned in another package
+
+func Changed() {}
+
+func SetHook(f func()) { hook = f }
+
+func Escape() *func() { return &addr }
+
+func Caller() {
+	callback()
+	hook()
+	handler()
+	hooks[0]()
+	addr()
+}
+`,
+		"other/other.go": `package other
+
+import "example.com/app/app"
+
+var cb = app.Changed
+
+func Swap() { app.Swapped = nil }
+
+func Use() {
+	cb()
+	app.Kept()
+	app.Swapped()
+}
+`,
+	}, Options{})
+
+	reasons := map[model.UnresolvedReason]string{
+		model.UnknownTarget:   "unknown",
+		model.FunctionValue:   "function-value",
+		model.InterfaceMethod: "interface",
+	}
+	describe := func(id string) []string {
+		var out []string
+		for _, c := range findFunc(t, repo, id).Calls {
+			s := c.Kind.String() + " " + c.Callee
+			if c.Kind == model.CallUnresolved {
+				s += " (" + reasons[c.Reason] + ")"
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	assertEqual(t, "app.Caller calls", describe("example.com/app/app.Caller"), []string{
+		"internal example.com/app/app.Changed",
+		"unresolved hook (function-value)",
+		"unresolved handler (function-value)",
+		"unresolved hooks (function-value)",
+		"unresolved addr (function-value)",
+	})
+	assertEqual(t, "other.Use calls", describe("example.com/app/other.Use"), []string{
+		"internal example.com/app/app.Changed",
+		"internal example.com/app/app.Changed",
+		"unresolved example.com/app/app.Swapped (function-value)",
+	})
+}
+
 func TestUnresolvedReasons(t *testing.T) {
 	repo := analyze(t, map[string]string{
 		"go.mod": goMod,

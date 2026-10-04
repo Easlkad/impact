@@ -175,7 +175,7 @@ func confidence(in Input) Score {
 			"%s may reach affected methods (%s) through implementations that cannot be linked",
 			count(hidden.interfaceCalls, "interface method call"), list(hidden.interfaceNames))
 		f.add("unknown-receiver-calls", -ConfidenceUnknownTargetCalls.Points(hidden.unknownCalls),
-			"%s with unknown receivers may reach affected methods (%s)",
+			"%s with unknown targets may reach affected functions (%s)",
 			count(hidden.unknownCalls, "call"), list(hidden.unknownNames))
 
 		values := functionValueCalls(r, head)
@@ -209,14 +209,24 @@ type hiddenCallerCounts struct {
 	interfaceNames, unknownNames []string
 }
 
-// hiddenCallers counts the unresolved method calls in head that may call an
-// affected method: those whose method name is the name of a changed or
-// impacted method. Each is a caller the call graph may be missing.
+// hiddenCallers counts the unresolved calls in head that may call an
+// affected function: method calls whose method name is the name of a
+// changed or impacted method, and unqualified calls (from a dot import,
+// for instance) whose name is the name of a changed or impacted function.
+// Each is a caller the call graph may be missing.
+//
+// Deleted functions are left out of the unqualified names: a head call
+// by the name of a deleted function of the same package is one of its
+// former callers, which are taken from the base commit.
 func hiddenCallers(r *impact.Result, head *model.Repository) hiddenCallerCounts {
-	affected := make(map[string]bool) // method names
+	methods := make(map[string]bool) // method names
+	funcs := make(map[string]bool)   // names of functions other than methods
 	for _, imp := range append(slices.Clone(r.Changed), r.Impacted...) {
-		if imp.Function.IsMethod() {
-			affected[imp.Function.Name] = true
+		switch {
+		case imp.Function.IsMethod():
+			methods[imp.Function.Name] = true
+		case imp.Change != changes.Deleted:
+			funcs[imp.Function.Name] = true
 		}
 	}
 	var h hiddenCallerCounts
@@ -226,10 +236,10 @@ func hiddenCallers(r *impact.Result, head *model.Repository) hiddenCallerCounts 
 				continue
 			}
 			i := strings.LastIndex(call.Callee, ".")
-			if i < 0 || !affected[call.Callee[i+1:]] {
+			name := call.Callee[i+1:]
+			if i < 0 && !funcs[name] || i >= 0 && !methods[name] {
 				continue
 			}
-			name := call.Callee[i+1:]
 			if call.Reason == model.InterfaceMethod {
 				h.interfaceCalls++
 				h.interfaceNames = appendUnique(h.interfaceNames, name)

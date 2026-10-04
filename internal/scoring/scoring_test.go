@@ -318,6 +318,35 @@ func Flush(s Saver, hooks []func()) {
 `,
 }
 
+// TestConfidencePackageLevelCallbacks checks that calls a changed function
+// may receive through package-level variables or dot imports lower the
+// confidence.
+func TestConfidencePackageLevelCallbacks(t *testing.T) {
+	files := map[string]string{
+		"app/app.go": `package app
+
+var hook func()
+
+func SetHook(f func()) { hook = f }
+
+func Changed() {}
+
+func Caller() { hook() }
+`,
+		"dot/dot.go": `package dot
+
+import . "example.com/app/app"
+
+func UseDot() { Changed() }
+`,
+	}
+	a := scenario{head: files, modified: []string{"app.Changed"}}.assess(t)
+	assertFactors(t, "confidence", a.Confidence, "unknown-receiver-calls -3", "function-values -2")
+	if got := factorNamed(a.Confidence, "unknown-receiver-calls").Reason; !strings.Contains(got, "(Changed)") {
+		t.Errorf("unknown target factor reason = %q", got)
+	}
+}
+
 func TestConfidenceUnresolvedCallsReduceConfidence(t *testing.T) {
 	a := scenario{head: repoWithBlindSpots, modified: []string{"db.Repo.Save"}}.assess(t)
 	assertFactors(t, "confidence", a.Confidence, "interface-calls -4", "unknown-receiver-calls -3", "function-values -2")
