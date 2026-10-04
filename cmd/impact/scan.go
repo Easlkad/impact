@@ -44,7 +44,10 @@ func runScan(args []string, stdout, stderr io.Writer) int {
 	for _, w := range repo.Warnings {
 		fmt.Fprintf(stderr, "warning: %s\n", w)
 	}
-	printSummary(stdout, repo, graph.Build(repo), *sample)
+	if err := printSummary(stdout, repo, graph.Build(repo), *sample); err != nil {
+		fmt.Fprintf(stderr, "impact: writing the summary: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
@@ -65,7 +68,10 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-func printSummary(w io.Writer, repo *model.Repository, g *graph.Graph, sample int) {
+// printSummary prints the summary of a scan and returns the first write
+// error.
+func printSummary(out io.Writer, repo *model.Repository, g *graph.Graph, sample int) error {
+	w := &errWriter{w: out}
 	var functions, methods, external, unresolved int
 	for _, fn := range repo.Functions() {
 		if fn.IsMethod() {
@@ -95,7 +101,7 @@ func printSummary(w io.Writer, repo *model.Repository, g *graph.Graph, sample in
 
 	n := min(sample, len(edges))
 	if n <= 0 {
-		return
+		return w.err
 	}
 	labels := packageLabels(repo)
 	name := func(id string) string {
@@ -106,6 +112,7 @@ func printSummary(w io.Writer, repo *model.Repository, g *graph.Graph, sample in
 	for _, e := range edges[:n] {
 		fmt.Fprintf(w, "  %s -> %s\n", name(e.From), name(e.To))
 	}
+	return w.err
 }
 
 // packageLabels returns the packageLabel of each package, by package ID.

@@ -41,7 +41,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "analyze":
 		return runAnalyze(args[1:], stdout, stderr)
 	case "version", "-version", "--version":
-		return runVersion(stdout)
+		return runVersion(stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -49,4 +49,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "impact: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
+}
+
+// errWriter writes to w and keeps the first error, after which it writes
+// nothing more: a renderer can print freely and check err once at the end.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) Write(p []byte) (int, error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+	var n int
+	n, e.err = e.w.Write(p)
+	return n, e.err
 }

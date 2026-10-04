@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -172,6 +173,34 @@ Package-level changes:
 `
 	if !strings.HasPrefix(out, "Comparing HEAD~1 (") || !strings.HasSuffix(out, want) {
 		t.Errorf("output:\n%s\nwant it to end with:\n%s", out, want)
+	}
+}
+
+// failingWriter fails every write, as a closed pipe or a full disk would.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+// TestOutputErrors checks that every command fails when its output cannot
+// be written, rather than reporting success with a truncated output.
+func TestOutputErrors(t *testing.T) {
+	g := gittest.New(t)
+	g.Write(sampleRepo)
+	g.Commit("base")
+	g.Write(map[string]string{"user/user.go": strings.Replace(sampleRepo["user/user.go"], "func ValidateUser() {}", "func ValidateUser() { _ = 1 }", 1)})
+	g.Commit("head")
+
+	for _, args := range [][]string{
+		{"scan", g.Dir},
+		{"diff", g.Dir, "HEAD~1", "HEAD"},
+		{"analyze", g.Dir, "HEAD~1", "HEAD"},
+		{"version"},
+	} {
+		var errOut bytes.Buffer
+		code := run(args, failingWriter{}, &errOut)
+		if code != exitError || !strings.Contains(errOut.String(), "disk full") {
+			t.Errorf("%s: exit code %d, stderr %q; want %d and the write error", args[0], code, errOut.String(), exitError)
+		}
 	}
 }
 

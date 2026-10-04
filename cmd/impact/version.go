@@ -23,7 +23,10 @@ func toolVersion() string {
 	return version
 }
 
-func runVersion(stdout io.Writer) int {
-	fmt.Fprintf(stdout, "impact %s\n", toolVersion())
+func runVersion(stdout, stderr io.Writer) int {
+	if _, err := fmt.Fprintf(stdout, "impact %s\n", toolVersion()); err != nil {
+		fmt.Fprintf(stderr, "impact: %v\n", err)
+		return exitError
+	}
 	return exitOK
 }

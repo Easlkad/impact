@@ -43,11 +43,16 @@ func runDiff(args []string, stdout, stderr io.Writer) int {
 	for _, w := range report.Warnings {
 		fmt.Fprintf(stderr, "warning: %s\n", w)
 	}
-	printReport(stdout, report)
+	if err := printReport(stdout, report); err != nil {
+		fmt.Fprintf(stderr, "impact: writing the report: %v\n", err)
+		return 1
+	}
 	return 0
 }
 
-func printReport(w io.Writer, r *changes.Report) {
+// printReport prints the changes and returns the first write error.
+func printReport(out io.Writer, r *changes.Report) error {
+	w := &errWriter{w: out}
 	base := short(r.Base.Hash)
 	if r.MergeBase {
 		base = "merge base " + base
@@ -55,7 +60,7 @@ func printReport(w io.Writer, r *changes.Report) {
 	fmt.Fprintf(w, "Comparing %s (%s) -> %s (%s)\n\n", r.Base.Ref, base, r.Head.Ref, short(r.Head.Hash))
 	if len(r.Files) == 0 {
 		fmt.Fprintln(w, "No Go files changed.")
-		return
+		return w.err
 	}
 
 	fmt.Fprintln(w, "Changed files:")
@@ -73,6 +78,7 @@ func printReport(w io.Writer, r *changes.Report) {
 
 	fmt.Fprintln(w, "\nPackage-level changes:")
 	printPackageLevel(w, r.PackageLevel)
+	return w.err
 }
 
 func printPackageLevel(w io.Writer, lines []changes.LineChange) {
