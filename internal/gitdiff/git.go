@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"testing/fstest"
 )
 
 // Repo is a git repository accessed through the git command.
@@ -175,13 +174,7 @@ func (r *Repo) Snapshot(commit string, keep func(path string) bool) (fs.FS, erro
 	if err != nil {
 		return nil, err
 	}
-	// fstest.MapFS is a complete in-memory fs.FS; despite its package name it
-	// does not depend on the testing package.
-	fsys := make(fstest.MapFS, len(paths))
-	for i, p := range paths {
-		fsys[p] = &fstest.MapFile{Data: contents[i]}
-	}
-	return fsys, nil
+	return newMemFS(paths, contents), nil
 }
 
 // readBlobs returns the contents of the given blobs, read through a single
