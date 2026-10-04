@@ -1,0 +1,47 @@
+# Continuous integration for impact itself: formatting, vet, tests and a
+# build, on the oldest supported Go version and on the latest one.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "stable"] # 1.22 is the version in go.mod
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # The gitdiff, changes and CLI tests create temporary git repositories
+      # with the git preinstalled on the runner. No network access is needed.
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build -o impact ./cmd/impact && ./impact version

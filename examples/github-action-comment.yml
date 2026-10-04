@@ -1,0 +1,63 @@
+# Example workflow: post the impact report as a pull request comment.
+#
+# Copy it to .github/workflows/impact-comment.yml in the repository to
+# analyze. It runs the same analysis as github-action.yml and keeps a single
+# comment per pull request up to date: the report starts with the hidden
+# marker <!-- impact-report -->, which is used to find the previous comment.
+#
+# impact itself never calls the GitHub API: the comment is posted by
+# actions/github-script with the workflow's own token.
+name: Impact comment
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # to create and update the comment
+
+jobs:
+  comment:
+    # Pull requests from forks get a read-only token, which cannot comment.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install impact
+        run: go install github.com/Easlkad/impact/cmd/impact@latest
+
+      - name: Analyze the pull request
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: impact analyze . "$BASE_SHA" "$HEAD_SHA" --merge-base --format markdown > impact.md
+
+      - name: Post or update the comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('impact.md', 'utf8');
+            const marker = '<!-- impact-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const previous = comments.find(
+              (c) => c.user.type === 'Bot' && c.body.startsWith(marker),
+            );
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

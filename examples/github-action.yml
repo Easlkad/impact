@@ -1,0 +1,76 @@
+# Example workflow: analyze every pull request with impact.
+#
+# Copy it to .github/workflows/impact.yml in the repository to analyze.
+#
+# It needs no token and no write permission. It writes the Markdown report
+# to the job summary, keeps the Markdown and JSON reports as an artifact,
+# and fails the job when the risk or confidence thresholds below are
+# violated. To also post the report as a pull request comment, see
+# github-action-comment.yml.
+name: Impact analysis
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+
+    steps:
+      # The full history is needed: impact reads both commits and their
+      # merge base from git. Nothing is checked out by impact itself.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # Pin a released version instead of @latest for reproducible results.
+      - name: Install impact
+        run: go install github.com/Easlkad/impact/cmd/impact@latest
+
+      # The exact commits of the pull request. base.sha is the tip of the base
+      # branch when the event fired, not where the pull request started;
+      # --merge-base makes impact compare from their merge base, which is what
+      # the "Files changed" tab of the pull request shows.
+      - name: Analyze the pull request
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          impact analyze . "$BASE_SHA" "$HEAD_SHA" --merge-base --format json > impact.json
+
+          # The thresholds are checked on this run. Its exit code is kept for
+          # the last step, so the report is published even when they fail:
+          #   3 = risk >= --fail-risk, 4 = confidence < --fail-confidence-below,
+          #   5 = both; 1 and 2 are errors and stop the job here.
+          status=0
+          impact analyze . "$BASE_SHA" "$HEAD_SHA" --merge-base --format markdown \
+            --fail-risk 75 --fail-confidence-below 40 > impact.md || status=$?
+          if [ "$status" -eq 1 ] || [ "$status" -eq 2 ]; then
+            exit "$status"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+          cat impact.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: impact-report
+          path: |
+            impact.md
+            impact.json
+
+      - name: Check risk and confidence thresholds
+        if: steps.impact.outputs.status != '0'
+        env:
+          STATUS: ${{ steps.impact.outputs.status }}
+        run: |
+          echo "::error::impact thresholds violated (exit code $STATUS); see the job summary"
+          exit 1
