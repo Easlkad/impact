@@ -306,7 +306,7 @@ func TestInitFunctions(t *testing.T) {
 		"b.go":   "package app\n\nfunc init() { setup() }\n\nfunc setup() {}\n",
 	}
 	r := compareCommits(t, base, func(g *gittest.Repo) {
-		// a.go sorts first, so its init takes over the analyzer ID init#0.
+		// An init added to another file leaves b.go's init unchanged.
 		g.Write(map[string]string{"a.go": "package app\n\nfunc init() {}\n"})
 	})
 	assertEqual(t, "functions", functions(r), []string{"added a.go init"})

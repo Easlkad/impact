@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Easlkad/impact/internal/changes"
+	"github.com/Easlkad/impact/internal/gittest"
 	"github.com/Easlkad/impact/internal/graph"
 	"github.com/Easlkad/impact/internal/model"
 )
@@ -210,6 +211,44 @@ func TestDeterministic(t *testing.T) {
 		for _, imp := range r.Impacted {
 			assertEqual(t, "roots of "+imp.ID(), imp.Roots, first.Lookup(imp.ID()).Roots)
 		}
+	}
+}
+
+// TestInitFunctionsAcrossCommits deletes the init of one file and modifies
+// the init of another: the two changes must keep distinct identities, as
+// init functions used to be numbered package-wide and both were init#0.
+func TestInitFunctionsAcrossCommits(t *testing.T) {
+	g := gittest.New(t)
+	g.Write(map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.22\n",
+		"a.go":   "package app\n\nfunc init() {}\n",
+		"b.go":   "package app\n\nfunc init() {\n\tsetup(1)\n}\n\nfunc setup(int) {}\n",
+	})
+	base := g.Commit("base")
+	g.Write(map[string]string{
+		"a.go": "package app\n",
+		"b.go": "package app\n\nfunc init() {\n\tsetup(2)\n}\n\nfunc setup(int) {}\n",
+	})
+	g.Commit("head")
+
+	report, err := changes.Compare(g.Dir, base, "HEAD", changes.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := FromReport(report)
+	var got []string
+	for _, imp := range r.Changed {
+		got = append(got, string(imp.Change)+" "+imp.Function.File+" "+imp.ID())
+		if r.Lookup(imp.ID()) != imp {
+			t.Errorf("Lookup(%s) does not return its own change", imp.ID())
+		}
+	}
+	want := []string{
+		"deleted a.go example.com/app.init@a.go#0",
+		"modified b.go example.com/app.init@b.go#0",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("changed:\n got: %q\nwant: %q", got, want)
 	}
 }
 

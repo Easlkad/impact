@@ -194,9 +194,14 @@ func newIndex(repo *model.Repository, headPath func(string) string) *index {
 		for _, loc := range fn.Declarations {
 			key := fn.ID
 			if fn.Name == "init" && fn.Receiver == "" {
-				// init functions are numbered package-wide in the analyzer,
-				// so adding one renumbers the others. Identify them by file
-				// and position in the file instead.
+				// The analyzer numbers init functions within their file, and
+				// its IDs name the file, which may have been renamed. Key
+				// them by their file in the head commit and their position
+				// in it, so an init in a renamed file is still the same one.
+				// The IDs themselves never collide between a deleted init
+				// and a head function: the file of a deleted init either
+				// still exists in head (and the same key would be found
+				// there) or was deleted or renamed away.
 				key = fmt.Sprintf("%s.init@%s#%d", fn.Package, headPath(loc.File), inits[loc.File])
 				inits[loc.File]++
 			}

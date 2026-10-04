@@ -479,14 +479,17 @@ func Use() {
 func TestInitFunctionsGetUniqueIDs(t *testing.T) {
 	repo := analyze(t, map[string]string{
 		"go.mod": goMod,
-		"a.go":   "package app\n\nfunc init() { setup() }\n\nfunc setup() {}\n",
+		"a.go":   "package app\n\nfunc init() { setup() }\n\nfunc setup() {}\n\nfunc init() {}\n",
 		"b.go":   "package app\n\nfunc init() {}\n",
 	}, Options{})
 
+	// init functions are numbered within their file.
+
 	assertEqual(t, "functions", funcIDs(repo), []string{
-		"example.com/app.init#0",
+		"example.com/app.init@a.go#0",
 		"example.com/app.setup",
-		"example.com/app.init#1",
+		"example.com/app.init@a.go#1",
+		"example.com/app.init@b.go#0",
 	})
 }
 

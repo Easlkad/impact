@@ -604,11 +604,13 @@ report.WriteText / WriteJSON / WriteMarkdown
 | Package         | import path                       | `example.com/app/user`                |
 | Function        | `<package>.<Name>`                | `example.com/app/user.CreateUser`     |
 | Method          | `<package>.<Receiver>.<Name>`     | `example.com/app/user.Service.Create` |
-| `init` function | `<package>.init#<n>`              | `example.com/app/user.init#0`         |
+| `init` function | `<package>.init@<file>#<n>`       | `example.com/app/user.init@user.go#0` |
 
 Import paths come from the nearest `go.mod`. Functions are matched between
 the two commits by ID: a function moved to another file of the same package
-is changed, not deleted and added.
+is changed, not deleted and added. `init` functions are numbered within
+their file, so adding or removing one does not renumber those of other
+files; an `init` in a renamed file is still matched to itself.
 
 ### How calls are resolved
 

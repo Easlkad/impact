@@ -148,7 +148,6 @@ type scanner struct {
 type pkgInfo struct {
 	pkg   *model.Package
 	files []*fileInfo
-	inits int // init functions seen so far, used to give each a unique ID
 }
 
 type fileInfo struct {
@@ -157,6 +156,7 @@ type fileInfo struct {
 	pkg     *pkgInfo
 	imports map[string]string // name used in this file -> import path
 	funcs   []funcDecl
+	inits   int // init functions seen so far, used to give each a unique ID
 }
 
 type funcDecl struct {
@@ -434,9 +434,12 @@ func (s *scanner) addFunc(fi *fileInfo, d *ast.FuncDecl) {
 	case recv != "":
 		id = p.pkg.ID + "." + recv + "." + name
 	case name == "init":
-		// A package may declare any number of init functions.
-		id = fmt.Sprintf("%s.init#%d", p.pkg.ID, p.inits)
-		p.inits++
+		// A package may declare any number of init functions. They are
+		// numbered within their file, so that adding or removing one
+		// leaves the IDs of those in other files unchanged: IDs match
+		// functions between two commits.
+		id = fmt.Sprintf("%s.init@%s#%d", p.pkg.ID, path.Base(fi.model.Path), fi.inits)
+		fi.inits++
 	}
 
 	loc := s.declaration(fi, d, d.Doc)
