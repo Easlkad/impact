@@ -511,22 +511,27 @@ func receiverType(d *ast.FuncDecl) string {
 }
 
 func (s *scanner) addType(fi *fileInfo, spec *ast.TypeSpec) {
-	info := &typeInfo{fields: make(map[string]typeRef)}
+	info := &typeInfo{fields: make(map[string]typeRef), methods: make(map[string]bool)}
 	if it, ok := spec.Type.(*ast.InterfaceType); ok {
 		info.iface = true
-		// Embedded interfaces contribute their methods.
 		for _, m := range it.Methods.List {
+			for _, n := range m.Names {
+				info.methods[n.Name] = true
+			}
+			// Embedded interfaces contribute their methods. typeOf leaves
+			// out the elements of type sets, such as ~int | string.
 			if len(m.Names) == 0 {
 				if t := s.typeOf(fi, m.Type); t.known() {
-					info.embedded = append(info.embedded, t)
+					info.same = append(info.same, t)
 				}
 			}
 		}
 	}
 	if spec.Assign.IsValid() {
-		// An alias has the fields and methods of the aliased type, which is
-		// exactly what following an embedded type provides.
-		info.embedded = append(info.embedded, s.typeOf(fi, spec.Type))
+		// An alias has the fields and methods of the aliased type. When
+		// that type is unknown (type A = struct{ ... }), the unknown
+		// typeRef keeps the alias's members unknown.
+		info.same = append(info.same, s.typeOf(fi, spec.Type))
 	}
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		for _, field := range st.Fields.List {

@@ -12,7 +12,8 @@ package golang
 // "var x T", a composite literal (T{} or &T{}), new(T), a type assertion
 // x.(T), a call to a function whose first result has a named type, or a
 // struct field reached through any of these. Embedded fields are followed
-// when looking up fields and methods.
+// when looking up fields and methods, by Go's rules: the shallowest one
+// wins, and an ambiguous selector stays unresolved.
 //
 // Local scopes are flattened per function: a name keeps the type from its
 // latest declaration even after its block ends. Calls that cannot be
@@ -23,6 +24,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"slices"
 
 	"github.com/Easlkad/impact/internal/model"
 )
@@ -40,8 +42,12 @@ func (t typeRef) String() string { return t.pkg + "." + t.name }
 // typeInfo is what the resolver needs to know about a declared type.
 type typeInfo struct {
 	fields   map[string]typeRef // struct fields, including embedded ones
-	embedded []typeRef          // embedded types (or the aliased type), whose fields and methods are promoted
-	iface    bool               // an interface type
+	methods  map[string]bool    // methods declared in an interface type, embedded ones excluded
+	embedded []typeRef          // types embedded in a struct, whose fields and methods are promoted
+	// same are types whose fields and methods belong to this type at the
+	// same depth: the aliased type, or the interfaces an interface embeds.
+	same  []typeRef
+	iface bool // an interface type
 }
 
 // predeclared holds Go's builtin functions and types. Calling one is a
@@ -86,24 +92,83 @@ func (s *scanner) typeOf(fi *fileInfo, expr ast.Expr) typeRef {
 	return typeRef{}
 }
 
-// fieldType returns the type of field name of t, following embedded types.
-func (s *scanner) fieldType(t typeRef, name string) typeRef {
-	return s.findField(t, name, make(map[typeRef]bool))
+// selectionKind says what a selector x.name denotes.
+type selectionKind int
+
+const (
+	selUnknown         selectionKind = iota // not found, or not known for certain
+	selField                                // a struct field
+	selMethod                               // a method declared in the repository
+	selInterfaceMethod                      // a method of an interface
+	selAmbiguous                            // several fields or methods at the shallowest depth
+)
+
+// selection is the field or method a selector x.name denotes.
+type selection struct {
+	kind selectionKind
+	typ  typeRef // type of a field, possibly unknown
+	id   string  // Function.ID of a method
 }
 
-func (s *scanner) findField(t typeRef, name string, seen map[typeRef]bool) typeRef {
-	info := s.types[t]
-	if info == nil || seen[t] {
-		return typeRef{}
-	}
-	seen[t] = true
-	if f, ok := info.fields[name]; ok {
-		return f
-	}
-	for _, e := range info.embedded {
-		if f := s.findField(e, name, seen); f.known() {
-			return f
+// selectMember returns the field or method name of a value of type t, by
+// Go's rules for embedded fields: the field or method at the shallowest
+// depth of embedding is selected, and if there are several at that depth,
+// the selector is ambiguous. A field thus shadows a deeper method of the
+// same name.
+//
+// Types outside the analysis (from other modules, or whose declaration
+// failed to parse) have unknown fields and methods, and a match found
+// deeper than such a type is not certain: the type could hold a shallower
+// one, which would be the one selected. The selection is then unknown.
+func (s *scanner) selectMember(t typeRef, name string) selection {
+	seen := make(map[typeRef]bool) // types at shallower depths shadow the same type deeper
+	opaque := false                // a type at a shallower depth has unknown members
+	for current := []typeRef{t}; len(current) > 0; {
+		var found []selection
+		var next []typeRef
+		unknown := false
+		// current grows while it is read, with the types of the same depth.
+		for i := 0; i < len(current); i++ {
+			t := current[i]
+			if seen[t] {
+				continue
+			}
+			seen[t] = true
+			if id := t.String() + "." + name; s.funcs[id] != nil {
+				found = append(found, selection{kind: selMethod, id: id})
+			}
+			info := s.types[t]
+			if info == nil {
+				unknown = true
+				continue
+			}
+			if f, ok := info.fields[name]; ok {
+				found = append(found, selection{kind: selField, typ: f})
+			}
+			if info.methods[name] {
+				found = append(found, selection{kind: selInterfaceMethod})
+			}
+			current = append(current, info.same...)
+			next = append(next, info.embedded...)
 		}
+		switch {
+		case len(found) > 1:
+			return selection{kind: selAmbiguous}
+		case len(found) == 1 && opaque:
+			return selection{}
+		case len(found) == 1:
+			return found[0]
+		}
+		opaque = opaque || unknown
+		current = next
+	}
+	return selection{}
+}
+
+// fieldType returns the type of field name of t, following embedded types.
+func (s *scanner) fieldType(t typeRef, name string) typeRef {
+	if sel := s.selectMember(t, name); sel.kind == selField {
+		return sel.typ
 	}
 	return typeRef{}
 }
@@ -111,36 +176,8 @@ func (s *scanner) findField(t typeRef, name string, seen map[typeRef]bool) typeR
 // lookupMethod returns the Function.ID of method name of t, following
 // embedded types.
 func (s *scanner) lookupMethod(t typeRef, name string) (string, bool) {
-	return s.findMethod(t, name, make(map[typeRef]bool))
-}
-
-func (s *scanner) findMethod(t typeRef, name string, seen map[typeRef]bool) (string, bool) {
-	if seen[t] {
-		return "", false
-	}
-	seen[t] = true
-	id := t.String() + "." + name
-	if s.funcs[id] != nil {
-		return id, true
-	}
-	if info := s.types[t]; info != nil {
-		for _, e := range info.embedded {
-			if id, ok := s.findMethod(e, name, seen); ok {
-				return id, true
-			}
-		}
-	}
-	return "", false
-}
-
-// hasField reports whether t has a field name, following embedded types.
-// Unlike fieldType, it also finds fields whose type is unknown, such as
-// fields holding functions.
-func (s *scanner) hasField(t typeRef, name string) bool {
-	return s.anyEmbedded(t, func(info *typeInfo) bool {
-		_, ok := info.fields[name]
-		return ok
-	})
+	sel := s.selectMember(t, name)
+	return sel.id, sel.kind == selMethod
 }
 
 // isInterface reports whether t is an interface type, or embeds one.
@@ -161,12 +198,7 @@ func (s *scanner) anyEmbedded(t typeRef, match func(*typeInfo) bool) bool {
 		if match(info) {
 			return true
 		}
-		for _, e := range info.embedded {
-			if visit(e) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(info.same, visit) || slices.ContainsFunc(info.embedded, visit)
 	}
 	return visit(t)
 }
@@ -449,23 +481,27 @@ func (r *resolver) resolveSelector(sel *ast.SelectorExpr) (model.Call, bool) {
 	if !t.known() {
 		return unresolved(types.ExprString(sel), model.UnknownTarget)
 	}
-	if id, ok := r.s.lookupMethod(t, name); ok {
-		return internal(id)
+	desc := t.String() + "." + name
+	m := r.s.selectMember(t, name)
+	switch m.kind {
+	case selMethod:
+		return internal(m.id)
+	case selField:
+		return unresolved(desc, model.FunctionValue) // a field holding a function
+	case selInterfaceMethod:
+		return unresolved(desc, model.InterfaceMethod)
 	}
 	if r.s.pkgs[t.pkg] == nil {
-		return external(t.String() + "." + name)
+		return external(desc)
 	}
-	// A type of the repository without that method: a field holding a
-	// function, an interface, or a method promoted from an embedded type
-	// defined elsewhere.
+	// A type of the repository without a known member of that name: a
+	// method promoted from an embedded type defined elsewhere, possibly an
+	// interface, or an ambiguous selector.
 	reason := model.UnknownTarget
-	switch {
-	case r.s.hasField(t, name):
-		reason = model.FunctionValue
-	case r.s.isInterface(t):
+	if m.kind == selUnknown && r.s.isInterface(t) {
 		reason = model.InterfaceMethod
 	}
-	return unresolved(t.String()+"."+name, reason)
+	return unresolved(desc, reason)
 }
 
 func internal(id string) (model.Call, bool) {

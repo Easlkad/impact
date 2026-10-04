@@ -282,6 +282,96 @@ func UseRange(cs []Cart) { c := Cart{}; for _, c := range cs { c.Total() }; c.To
 	})
 }
 
+// TestEmbeddedSelection checks Go's rules for promoted fields and methods:
+// the shallowest depth wins, a field shadows a deeper method, an ambiguous
+// selector is not resolved, and a type outside the repository may hide a
+// shallower method.
+func TestEmbeddedSelection(t *testing.T) {
+	repo := analyze(t, map[string]string{
+		"go.mod": goMod,
+		"app.go": `package app
+
+import "sync"
+
+type C struct{}
+
+func (C) M() {}
+func (C) N() {}
+
+type A struct{ C }
+
+type B struct{}
+
+func (B) M() {}
+
+type X struct{}
+
+func (X) M() {}
+
+// B.M (depth 1) wins over C.M (depth 2), whatever the field order.
+type S struct {
+	A
+	B
+}
+
+// The field N shadows the method C.N promoted through A.
+type F struct {
+	A
+	N func()
+}
+
+// M is at depth 1 twice.
+type Amb struct {
+	B
+	X
+}
+
+// sync.Mutex is outside the repository and could have M at depth 1.
+type Opaque struct {
+	sync.Mutex
+	A
+}
+
+// The depth-1 match is certain: ambiguity would not compile.
+type Shallow struct {
+	sync.Mutex
+	B
+}
+
+type AliasB = B
+
+// An alias has the methods of B at the same depth.
+type Aliased struct {
+	A
+	AliasB
+}
+
+func Run(s S, f F, amb Amb, o Opaque, sh Shallow, al Aliased) {
+	s.M()
+	f.N()
+	amb.M()
+	o.M()
+	sh.M()
+	al.M()
+}
+`,
+	}, Options{})
+
+	assertEqual(t, "calls", calls(t, repo, "example.com/app.Run"), []string{
+		"internal example.com/app.B.M",
+		"unresolved example.com/app.F.N",
+		"unresolved example.com/app.Amb.M",
+		"unresolved example.com/app.Opaque.M",
+		"internal example.com/app.B.M",
+		"internal example.com/app.B.M",
+	})
+	for _, c := range findFunc(t, repo, "example.com/app.Run").Calls {
+		if c.Callee == "example.com/app.F.N" && c.Reason != model.FunctionValue {
+			t.Errorf("f.N() reason = %v, want a function value", c.Reason)
+		}
+	}
+}
+
 func TestShadowedImport(t *testing.T) {
 	repo := analyze(t, map[string]string{
 		"go.mod": goMod,
