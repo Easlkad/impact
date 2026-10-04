@@ -80,6 +80,10 @@ func TestParse(t *testing.T) {
 		"diff --git a/script.go b/script.go",
 		"old mode 100644",
 		"new mode 100755",
+		// Binary change, as git prints it without --binary.
+		"diff --git a/logo.png b/logo.png",
+		"index 7777777..8888888 100644",
+		"Binary files a/logo.png and b/logo.png differ",
 		"",
 	}, "\n")
 
@@ -111,6 +115,7 @@ func TestParse(t *testing.T) {
 		}},
 		{NewPath: "empty.go", Status: Added},
 		{OldPath: "script.go", NewPath: "script.go", Status: Modified},
+		{OldPath: "logo.png", NewPath: "logo.png", Status: Modified, Binary: true},
 	}
 
 	if len(got) != len(want) {

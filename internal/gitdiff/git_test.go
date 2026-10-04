@@ -50,7 +50,7 @@ func TestRepo(t *testing.T) {
 	})
 
 	t.Run("Diff", func(t *testing.T) {
-		files, err := repo.Diff(base, head)
+		files, err := repo.Diff(base, head, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,6 +96,59 @@ func TestRepo(t *testing.T) {
 	}
 	if got := g.Git("status", "--porcelain"); got != "M a.go" {
 		t.Errorf("git status = %q, want only the uncommitted a.go", got)
+	}
+}
+
+// TestDiffBinaryAttribute checks that files marked -diff in .gitattributes,
+// which git reports as binary, are diffed as text when asked for.
+func TestDiffBinaryAttribute(t *testing.T) {
+	g := gittest.New(t)
+	g.Write(map[string]string{
+		".gitattributes": "*.go -diff\n*.dat -diff\n",
+		"a.go":           "package a\n\nfunc A() {}\n",
+		"old.go":         "package a\n\nfunc Old() {\n\t// a body long enough\n\t// to be detected\n\t// as a rename\n}\n",
+		"data.dat":       "one\n",
+	})
+	base := g.Commit("base")
+	g.Remove("old.go")
+	g.Write(map[string]string{
+		"a.go":     "package a\n\nfunc A() { B() }\n",
+		"new.go":   "package a\n\nfunc Old() {\n\t// a body long enough\n\t// to be detected\n\t// as a rename!\n}\n",
+		"data.dat": "two\n",
+	})
+	head := g.Commit("head")
+
+	repo, err := Open(g.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isGo := func(path string) bool { return strings.HasSuffix(path, ".go") }
+	files, err := repo.Diff(base, head, isGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []File{
+		{OldPath: "a.go", NewPath: "a.go", Status: Modified, Hunks: []Hunk{
+			{Old: Range{3, 1}, New: Range{3, 1}, Removed: []string{"func A() {}"}, Added: []string{"func A() { B() }"}},
+		}},
+		{OldPath: "data.dat", NewPath: "data.dat", Status: Modified, Binary: true},
+		{OldPath: "old.go", NewPath: "new.go", Status: Renamed, Hunks: []Hunk{
+			{Old: Range{6, 1}, New: Range{6, 1}, Removed: []string{"\t// as a rename"}, Added: []string{"\t// as a rename!"}},
+		}},
+	}
+	if !reflect.DeepEqual(files, want) {
+		t.Errorf("Diff:\n got: %+v\nwant: %+v", files, want)
+	}
+
+	// Without the text option, git's view is kept.
+	files, err = repo.Diff(base, head, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if !f.Binary || len(f.Hunks) != 0 {
+			t.Errorf("Diff without text: %+v, want a binary change without hunks", f)
+		}
 	}
 }
 

@@ -148,7 +148,9 @@ func confidence(in Input) Score {
 		warnings = len(head.Warnings)
 	}
 	for _, w := range report.Warnings {
-		if strings.HasPrefix(w, "base: ") { // head warnings are counted above
+		// Head warnings are counted above; diff warnings are about Go files
+		// whose changed lines git did not report.
+		if strings.HasPrefix(w, "base: ") || strings.HasPrefix(w, "diff: ") {
 			warnings++
 		}
 	}

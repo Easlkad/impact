@@ -68,12 +68,82 @@ func (r *Repo) MergeBase(a, b string) (string, error) {
 
 // Diff returns the files that differ between two commits, with renames
 // detected and zero lines of context, so that hunks hold only changed lines.
-func (r *Repo) Diff(base, head string) ([]File, error) {
-	out, err := r.git("diff",
+//
+// Files that git considers binary, because of their contents or of a -diff
+// attribute, come without hunks. Those for which text reports true for the
+// old or new path are diffed again as text, so that their changed lines are
+// known whatever the repository's attributes say. text may be nil.
+func (r *Repo) Diff(base, head string, text func(path string) bool) ([]File, error) {
+	files, err := r.diff(base, head, false, nil)
+	if err != nil || text == nil {
+		return files, err
+	}
+	wanted := func(f File) bool {
+		return f.Binary && (f.OldPath != "" && text(f.OldPath) || f.NewPath != "" && text(f.NewPath))
+	}
+	var paths []string
+	for _, f := range files {
+		if wanted(f) {
+			for _, p := range []string{f.OldPath, f.NewPath} {
+				if p != "" {
+					paths = append(paths, p)
+				}
+			}
+		}
+	}
+	if len(paths) == 0 {
+		return files, nil
+	}
+	// Both paths of a rename are included, so the second diff pairs the
+	// files as the first one did.
+	textFiles, err := r.diff(base, head, true, paths)
+	if err != nil {
+		return nil, err
+	}
+	// Each text diff takes the place of the binary one for the same paths,
+	// keeping git's order. Should git pair the files differently, the
+	// leftovers are appended rather than lost.
+	type key struct{ old, new string }
+	byPaths := make(map[key]File, len(textFiles))
+	for _, f := range textFiles {
+		byPaths[key{f.OldPath, f.NewPath}] = f
+	}
+	out := make([]File, 0, len(files)+len(textFiles))
+	for _, f := range files {
+		if !wanted(f) {
+			out = append(out, f)
+			continue
+		}
+		k := key{f.OldPath, f.NewPath}
+		if tf, ok := byPaths[k]; ok {
+			out = append(out, tf)
+			delete(byPaths, k)
+		}
+	}
+	for _, f := range textFiles {
+		if _, ok := byPaths[key{f.OldPath, f.NewPath}]; ok {
+			out = append(out, f)
+		}
+	}
+	return out, nil
+}
+
+// diff runs git diff between two commits, limited to the given paths when
+// there are any. With text set, every file is diffed as text.
+func (r *Repo) diff(base, head string, text bool, paths []string) ([]File, error) {
+	args := []string{"diff",
 		"--no-color", "--no-ext-diff", "--no-textconv", // plain output, whatever the user's config
 		"--src-prefix=a/", "--dst-prefix=b/",
 		"--find-renames", "--unified=0",
-		base, head, "--")
+	}
+	if text {
+		args = append(args, "--text")
+	}
+	args = append(args, base, head, "--")
+	for _, p := range paths {
+		args = append(args, ":(literal)"+p) // no glob matching in file names
+	}
+	out, err := r.git(args...)
 	if err != nil {
 		return nil, err
 	}

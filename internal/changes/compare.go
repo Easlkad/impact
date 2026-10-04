@@ -65,13 +65,19 @@ func Compare(dir, baseRef, headRef string, opts Options) (*Report, error) {
 		report.MergeBase = true
 	}
 
-	diff, err := repo.Diff(report.Base.Hash, report.Head.Hash)
+	// Go files are diffed as text even when .gitattributes marks them
+	// binary: without hunks, their changed functions would go unnoticed.
+	diff, err := repo.Diff(report.Base.Hash, report.Head.Hash, isGo)
 	if err != nil {
 		return nil, err
 	}
+	var binary []string
 	for _, f := range diff {
 		if isGo(f.OldPath) || isGo(f.NewPath) {
 			report.Files = append(report.Files, f)
+			if f.Binary {
+				binary = append(binary, "diff: "+f.Path()+": git reported a binary change; its changed lines are unknown")
+			}
 		}
 	}
 	if len(report.Files) == 0 {
@@ -88,8 +94,8 @@ func Compare(dir, baseRef, headRef string, opts Options) (*Report, error) {
 	}
 	report.BaseAnalysis, report.HeadAnalysis = base, head
 	report.Functions, report.PackageLevel = Detect(report.Files, base, head)
-	report.Warnings = append(changedFileWarnings(base, report.Files, "base"),
-		changedFileWarnings(head, report.Files, "head")...)
+	report.Warnings = append(binary, changedFileWarnings(base, report.Files, "base")...)
+	report.Warnings = append(report.Warnings, changedFileWarnings(head, report.Files, "head")...)
 	return report, nil
 }
 

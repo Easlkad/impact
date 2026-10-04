@@ -32,6 +32,10 @@ type File struct {
 	NewPath string // path in the head commit; empty for deleted files
 	Status  Status
 	Hunks   []Hunk // changed line ranges; none for pure renames, mode or binary changes
+	// Binary is set when git reported the contents as binary and printed
+	// no hunks for them, which also happens for text files marked -diff in
+	// .gitattributes.
+	Binary bool
 }
 
 // Path returns the path of the file in the head commit, or in the base
@@ -135,6 +139,8 @@ func Parse(r io.Reader) ([]File, error) {
 			cur.OldPath = parsePath(line[len("--- "):], "a/")
 		case strings.HasPrefix(line, "+++ "):
 			cur.NewPath = parsePath(line[len("+++ "):], "b/")
+		case strings.HasPrefix(line, "Binary files "), line == "GIT binary patch":
+			cur.Binary = true
 		case strings.HasPrefix(line, "@@ "):
 			h, err := parseHunkHeader(line)
 			if err != nil {

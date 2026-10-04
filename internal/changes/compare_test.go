@@ -131,6 +131,18 @@ func TestModificationInsideFunction(t *testing.T) {
 	}
 }
 
+// TestGoFilesMarkedBinary checks that a -diff attribute on Go files does
+// not hide their changes.
+func TestGoFilesMarkedBinary(t *testing.T) {
+	base := map[string]string{".gitattributes": "*.go -diff\n", "go.mod": goMod, "user/user.go": userGo}
+	r := compareCommits(t, base, func(g *gittest.Repo) {
+		editFile(t, g, "user/user.go", `fmt.Errorf("name too long")`, `fmt.Errorf("name longer than %d", maxNameLength)`)
+	})
+	assertEqual(t, "files", files(r), []string{"modified user/user.go"})
+	assertEqual(t, "functions", functions(r), []string{"modified user/user.go ValidateUser"})
+	assertEqual(t, "warnings", r.Warnings, nil)
+}
+
 func TestAddedFunction(t *testing.T) {
 	r := compareCommits(t, userRepo, func(g *gittest.Repo) {
 		editFile(t, g, "user/user.go", "func SaveUser", "func DeleteUser(name string) error {\n\treturn nil\n}\n\nfunc SaveUser")
