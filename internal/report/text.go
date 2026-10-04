@@ -65,7 +65,7 @@ func (p *printer) text(r *Report, opts TextOptions) {
 				p.printf("  ... %d more (use -paths to show more)\n", len(r.TransitiveImpact)-n)
 				break
 			}
-			for k, id := range f.Path {
+			for k, id := range r.path(f.ID) {
 				step := r.lookup(id)
 				s := fmt.Sprintf("%s (%s)", step.Name, step.File)
 				if step.Distance == 0 {

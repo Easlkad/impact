@@ -174,6 +174,57 @@ func TestJSONSchema(t *testing.T) {
 	}
 }
 
+// TestJSONStreaming checks that WriteJSON, which writes the report piece
+// by piece and computes each path as it goes, gives the same bytes as
+// encoding the report at once with every path set.
+func TestJSONStreaming(t *testing.T) {
+	r := build(t, shop, "core.Charge")
+	for _, f := range append(slices.Clone(r.DirectImpact), r.TransitiveImpact...) {
+		if f.Path != nil {
+			t.Fatalf("Build set the path of %s", f.ID)
+		}
+	}
+
+	full := *r
+	fill := func(fns []Function) []Function {
+		out := slices.Clone(fns)
+		for i := range out {
+			out[i] = r.withPath(out[i])
+		}
+		return out
+	}
+	full.Changed, full.DirectImpact, full.TransitiveImpact = fill(r.Changed), fill(r.DirectImpact), fill(r.TransitiveImpact)
+	full.Endpoints = slices.Clone(r.Endpoints)
+	for i := range full.Endpoints {
+		full.Endpoints[i].Handler = r.withPath(full.Endpoints[i].Handler)
+	}
+	full.Workers = slices.Clone(r.Workers)
+	for i := range full.Workers {
+		full.Workers[i].Function = r.withPath(full.Workers[i].Function)
+	}
+	full.Tests = slices.Clone(r.Tests)
+	for i := range full.Tests {
+		full.Tests[i].Function = r.withPath(full.Tests[i].Function)
+	}
+	var want bytes.Buffer
+	enc := json.NewEncoder(&want)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&full); err != nil {
+		t.Fatal(err)
+	}
+
+	got := render(t, func(b *bytes.Buffer) error { return WriteJSON(b, r) })
+	if got != want.String() {
+		t.Errorf("WriteJSON differs from encoding at once:\n got: %s\nwant: %s", got, want.String())
+	}
+	for _, path := range []string{`"path": [`, `"handler": {`, `"kind": "goroutine"`, `"kind": "test"`} {
+		if !strings.Contains(got, path) {
+			t.Errorf("output lacks %s, so the test does not cover it", path)
+		}
+	}
+}
+
 func TestJSONListsAreNeverNull(t *testing.T) {
 	r := build(t, shop) // nothing changed
 	out := render(t, func(b *bytes.Buffer) error { return WriteJSON(b, r) })

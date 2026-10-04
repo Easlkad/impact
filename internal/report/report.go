@@ -56,6 +56,7 @@ type Report struct {
 	Confidence Score   `json:"confidence"`
 
 	functions map[string]Function // every changed and impacted function, for the renderers
+	impact    *impact.Result      // for computing impact paths
 }
 
 // Tool identifies the program that produced the report.
@@ -93,6 +94,11 @@ type Function struct {
 	// Path is a shortest chain of calls to a changed function, from this
 	// function (first) to the changed one (last). All three are empty for
 	// changed functions.
+	//
+	// Path is only set in the JSON output: in a deep call graph, the paths
+	// of all functions hold O(n²) IDs, so Build leaves it empty, WriteJSON
+	// computes each path as it writes the function, and the other
+	// renderers compute only the paths they show (see Report.path).
 	CausedBy []string `json:"causedBy,omitempty"`
 	Roots    []string `json:"roots,omitempty"`
 	Path     []string `json:"path,omitempty"`
@@ -198,6 +204,7 @@ func Build(in Input) *Report {
 		Risk:                score(in.Assessment.Risk),
 		Confidence:          score(in.Assessment.Confidence),
 		functions:           make(map[string]Function),
+		impact:              in.Impact,
 	}
 
 	for _, f := range ch.Files {
@@ -208,7 +215,7 @@ func Build(in Input) *Report {
 		r.ChangedFiles = append(r.ChangedFiles, file)
 	}
 
-	fn := func(imp *impact.Impact) Function { return r.function(in.Impact, imp) }
+	fn := r.function
 	for _, imp := range c.Changed {
 		r.Changed = append(r.Changed, fn(imp))
 	}
@@ -252,7 +259,13 @@ func Build(in Input) *Report {
 }
 
 // function converts an impact, and remembers it for the renderers.
-func (r *Report) function(res *impact.Result, imp *impact.Impact) Function {
+//
+// A function can appear in several lists (as a changed function and as the
+// handler of an endpoint, for instance): it is converted once.
+func (r *Report) function(imp *impact.Impact) Function {
+	if f, ok := r.functions[imp.ID()]; ok {
+		return f
+	}
 	f := Function{
 		ID:       imp.ID(),
 		Name:     imp.Function.QualifiedName(),
@@ -266,9 +279,26 @@ func (r *Report) function(res *impact.Result, imp *impact.Impact) Function {
 	if imp.Distance > 0 {
 		f.CausedBy = append([]string{}, imp.CausedBy...)
 		f.Roots = append([]string{}, imp.Roots...)
-		f.Path = res.Path(imp.ID())
 	}
 	r.functions[f.ID] = f
+	return f
+}
+
+// path returns the impact path of the function id (see Function.Path), or
+// nil for a changed function. It is computed on each call.
+func (r *Report) path(id string) []string {
+	if r.impact == nil {
+		return nil
+	}
+	if imp := r.impact.Lookup(id); imp == nil || imp.Distance == 0 {
+		return nil
+	}
+	return r.impact.Path(id)
+}
+
+// withPath returns f with its Path set.
+func (r *Report) withPath(f Function) Function {
+	f.Path = r.path(f.ID)
 	return f
 }
 

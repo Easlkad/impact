@@ -89,11 +89,11 @@ func (p *printer) markdown(r *Report, opts MarkdownOptions) {
 		})
 	}
 
-	if paths := importantPaths(r); len(paths) > 0 && opts.MaxPaths > 0 {
+	if starts := importantPaths(r); len(starts) > 0 && opts.MaxPaths > 0 {
 		p.line("\n### Important impact paths\n")
-		p.mdList(len(paths), limit(opts.MaxPaths, opts.MaxItems), "impact path", func(i int) string {
+		p.mdList(len(starts), limit(opts.MaxPaths, opts.MaxItems), "impact path", func(i int) string {
 			var steps []string
-			for _, id := range paths[i] {
+			for _, id := range r.path(starts[i]) {
 				step := r.lookup(id)
 				s := code(step.Name)
 				if step.Distance == 0 {
@@ -145,16 +145,17 @@ func (p *printer) markdown(r *Report, opts MarkdownOptions) {
 	p.mdFooter(r)
 }
 
-// importantPaths returns the impact paths most worth showing: those of the
-// affected endpoints and workers, then those of the transitive impacts, each
-// starting function once.
-func importantPaths(r *Report) [][]string {
-	var paths [][]string
+// importantPaths returns the IDs of the functions whose impact paths are
+// most worth showing: the affected endpoints and workers, then the
+// transitive impacts, each once. Changed functions have no path. The paths
+// themselves are computed only for those shown.
+func importantPaths(r *Report) []string {
+	var starts []string
 	seen := make(map[string]bool)
 	add := func(f Function) {
-		if len(f.Path) > 1 && !seen[f.ID] {
+		if f.Distance > 0 && !seen[f.ID] {
 			seen[f.ID] = true
-			paths = append(paths, f.Path)
+			starts = append(starts, f.ID)
 		}
 	}
 	for _, e := range r.Endpoints {
@@ -166,7 +167,7 @@ func importantPaths(r *Report) [][]string {
 	for _, f := range r.TransitiveImpact {
 		add(f)
 	}
-	return paths
+	return starts
 }
 
 // mdList prints n list items, at most max of them (0: all), followed by a
