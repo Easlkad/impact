@@ -2,6 +2,7 @@ package impact
 
 import (
 	"fmt"
+	"math/rand"
 	"reflect"
 	"slices"
 	"sort"
@@ -210,6 +211,61 @@ func TestDeterministic(t *testing.T) {
 		assertEqual(t, "summary", summary(r), summary(first))
 		for _, imp := range r.Impacted {
 			assertEqual(t, "roots of "+imp.ID(), imp.Roots, first.Lookup(imp.ID()).Roots)
+		}
+	}
+}
+
+// TestRootsMatchSearchPerRoot compares Roots, found by propagating sets
+// over strongly connected components, with one breadth-first search per
+// changed function, on random graphs with cycles.
+func TestRootsMatchSearchPerRoot(t *testing.T) {
+	for seed := int64(1); seed <= 300; seed++ {
+		rng := rand.New(rand.NewSource(seed))
+		n := 2 + rng.Intn(40)
+		name := func(i int) string { return fmt.Sprintf("F%02d", i) }
+		var edges []string
+		for i := range n {
+			edges = append(edges, name(i))
+			for j := range n {
+				if rng.Intn(n) < 2 { // about two callees per function, self-calls included
+					edges = append(edges, name(i)+" -> "+name(j))
+				}
+			}
+		}
+		g := buildGraph(edges...)
+		var roots []string
+		for i := range n {
+			if rng.Intn(8) == 0 {
+				roots = append(roots, name(i))
+			}
+		}
+		if len(roots) == 0 {
+			roots = append(roots, name(rng.Intn(n)))
+		}
+
+		want := make(map[string][]string) // roots is sorted, so each list is
+		for _, root := range roots {
+			seen := map[string]bool{root: true}
+			queue := []string{root}
+			for len(queue) > 0 {
+				id := queue[0]
+				queue = queue[1:]
+				for _, caller := range g.Callers(id) {
+					if !seen[caller] {
+						seen[caller] = true
+						queue = append(queue, caller)
+						want[caller] = append(want[caller], root)
+					}
+				}
+			}
+		}
+
+		r := Analyze(modified(t, g, roots...), g, g)
+		for _, imp := range r.Impacted {
+			if !slices.Equal(imp.Roots, want[imp.ID()]) {
+				t.Fatalf("seed %d: roots of %s = %v, want %v\nedges: %q\nchanged: %q",
+					seed, imp.ID(), imp.Roots, want[imp.ID()], edges, roots)
+			}
 		}
 	}
 }
