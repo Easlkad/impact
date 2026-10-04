@@ -481,6 +481,51 @@ func TestParseErrorsAreWarnings(t *testing.T) {
 	}
 }
 
+// TestLineDirectives checks that lines are those of the files in the
+// repository, as git diffs count them, whatever //line directives say.
+func TestLineDirectives(t *testing.T) {
+	repo := analyze(t, map[string]string{
+		"go.mod": goMod,
+		"gen.go": `package app
+
+import "net/http"
+
+//line parser.y:1000
+
+func Handle() {
+	http.HandleFunc("/x", Serve)
+	helper()
+}
+
+func Serve(w http.ResponseWriter, r *http.Request) {}
+
+func helper() {}
+`,
+		"broken.go": "package app\n\n//line other.y:500\nfunc Broken( {\n",
+	}, Options{})
+
+	fn := findFunc(t, repo, "example.com/app.Handle")
+	if fn.StartLine != 7 || fn.EndLine != 10 {
+		t.Errorf("Handle lines = %d-%d, want 7-10", fn.StartLine, fn.EndLine)
+	}
+	if len(fn.Routes) != 1 || fn.Routes[0].Line != 8 {
+		t.Errorf("routes = %+v, want one on line 8", fn.Routes)
+	}
+	var helperLine int
+	for _, c := range fn.Calls {
+		if c.Callee == "example.com/app.helper" {
+			helperLine = c.Line
+		}
+	}
+	if helperLine != 9 {
+		t.Errorf("call to helper on line %d, want 9", helperLine)
+	}
+
+	if len(repo.Warnings) != 1 || !strings.HasPrefix(repo.Warnings[0], "broken.go:4:") {
+		t.Errorf("warnings = %q, want one at broken.go:4", repo.Warnings)
+	}
+}
+
 func TestScanSubdirectoryOfModule(t *testing.T) {
 	root := writeRepo(t, map[string]string{
 		"go.mod":       goMod,

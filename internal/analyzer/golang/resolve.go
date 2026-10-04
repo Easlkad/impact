@@ -270,7 +270,7 @@ func (r *resolver) visit(n ast.Node) bool {
 // record adds a call to the function, if it is a call relationship.
 func (r *resolver) record(n *ast.CallExpr, mode model.CallMode) {
 	if call, ok := r.resolveCall(n); ok {
-		call.Line = r.s.fset.Position(n.Lparen).Line
+		call.Line = r.s.line(n.Lparen)
 		call.Mode = mode
 		r.fn.Calls = append(r.fn.Calls, call)
 	}

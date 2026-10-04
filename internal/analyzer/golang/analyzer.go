@@ -7,10 +7,13 @@
 package golang
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/build/constraint"
 	"go/parser"
+	goscanner "go/scanner" // scanner is the analyzer's own type
 	"go/token"
 	"io/fs"
 	"os"
@@ -257,7 +260,7 @@ func (s *scanner) parseFile(name string) {
 	}
 	f, err := parser.ParseFile(s.fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		s.warnf("%v (file skipped)", err)
+		s.warnf("%s (file skipped)", parseError(name, src, err))
 		return
 	}
 	if hasIgnoreTag(f) {
@@ -283,6 +286,29 @@ func (s *scanner) parseFile(name string) {
 		syntax: f,
 		pkg:    p,
 	})
+}
+
+// parseError formats an error of the parser for the file name with src. The
+// parser places errors after //line directives, which may name another file
+// and line; the position is recomputed in the file itself, so the warning
+// names the file it is about.
+func parseError(name string, src []byte, err error) string {
+	var list goscanner.ErrorList
+	if !errors.As(err, &list) || len(list) == 0 {
+		return err.Error()
+	}
+	e := list[0]
+	off := e.Pos.Offset
+	if !e.Pos.IsValid() || off < 0 || off > len(src) {
+		return err.Error()
+	}
+	line := 1 + bytes.Count(src[:off], []byte("\n"))
+	col := off - bytes.LastIndexByte(src[:off], '\n')
+	msg := fmt.Sprintf("%s:%d:%d: %s", name, line, col, e.Msg)
+	if len(list) > 1 {
+		msg += fmt.Sprintf(" (and %d more errors)", len(list)-1)
+	}
+	return msg
 }
 
 // hasIgnoreTag reports whether f is excluded with "//go:build ignore", the
@@ -449,10 +475,15 @@ func (s *scanner) declaration(fi *fileInfo, n ast.Node, doc *ast.CommentGroup) m
 	}
 	return model.Declaration{
 		File:      fi.model.Path,
-		StartLine: s.fset.Position(start).Line,
-		EndLine:   s.fset.Position(n.End()).Line,
+		StartLine: s.line(start),
+		EndLine:   s.line(n.End()),
 	}
 }
+
+// line returns the line of pos in its file as stored in the repository.
+// //line directives, common in generated code, are ignored: lines are
+// matched against git diffs and reported against the repository's files.
+func (s *scanner) line(pos token.Pos) int { return s.fset.PositionFor(pos, false).Line }
 
 // receiverType returns the receiver type name of a method ("Service" for
 // (s *Service), "List" for (l List[T])), or "" for a function.

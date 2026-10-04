@@ -143,6 +143,18 @@ func TestGoFilesMarkedBinary(t *testing.T) {
 	assertEqual(t, "warnings", r.Warnings, nil)
 }
 
+// TestLineDirectives checks that functions are matched against the lines
+// git reports, not those that //line directives assign.
+func TestLineDirectives(t *testing.T) {
+	gen := "package user\n\n//line user.tmpl:1000\n\nfunc A() int {\n\treturn 1\n}\n\nfunc B() int {\n\treturn 2\n}\n"
+	base := map[string]string{"go.mod": goMod, "user/gen.go": gen}
+	r := compareCommits(t, base, func(g *gittest.Repo) {
+		editFile(t, g, "user/gen.go", "return 2", "return 3")
+	})
+	assertEqual(t, "functions", functions(r), []string{"modified user/gen.go B"})
+	assertEqual(t, "package level", packageLevel(r), nil)
+}
+
 func TestAddedFunction(t *testing.T) {
 	r := compareCommits(t, userRepo, func(g *gittest.Repo) {
 		editFile(t, g, "user/user.go", "func SaveUser", "func DeleteUser(name string) error {\n\treturn nil\n}\n\nfunc SaveUser")

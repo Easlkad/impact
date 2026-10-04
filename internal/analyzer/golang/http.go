@@ -63,7 +63,7 @@ func (r *resolver) recordRoute(call *ast.CallExpr) {
 		Method:  method,
 		Path:    path,
 		Handler: handler,
-		Line:    r.s.fset.Position(call.Lparen).Line,
+		Line:    r.s.line(call.Lparen),
 	})
 }
 
