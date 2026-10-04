@@ -223,19 +223,53 @@ func limit(n, max int) int {
 	return n
 }
 
-// code formats s as inline code, choosing a fence that s does not contain.
+// code formats s as inline code. s comes from the repository (file names,
+// route patterns), so it must not be able to end the code span early and
+// inject Markdown, such as a link, into the report.
+//
+// By CommonMark's rules, a code span ends at the first backtick run as long
+// as its opening one: the fence is made longer than the longest run in s.
+// A space pads s when it starts or ends with a backtick, which would merge
+// with the fence, or with a space, which the padding protects since one
+// space is stripped from each side (unless s is only spaces, which are kept
+// as they are). Line breaks, which could end the list
+// item and start a new block, become spaces, as a code span shows them.
 func code(s string) string {
-	if strings.Contains(s, "`") {
-		return "`` " + s + " ``"
+	s = singleLine(s)
+	if s == "" {
+		return "` `"
 	}
-	return "`" + s + "`"
+	longest, run := 0, 0
+	for _, c := range s {
+		if c == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", longest+1)
+	// Only spaces are shown as they are: no space is stripped from them.
+	if strings.Trim(s, " ") != "" && (strings.HasPrefix(s, "`") || strings.HasSuffix(s, "`") ||
+		strings.HasPrefix(s, " ") || strings.HasSuffix(s, " ")) {
+		s = " " + s + " "
+	}
+	return fence + s + fence
 }
 
 // escape escapes the characters that Markdown would interpret in plain
-// text, such as "*", "_" and "<".
+// text, such as "*", "_" and "<", and turns line breaks into spaces so the
+// text stays in its paragraph or list item.
 func escape(s string) string {
-	return markdownEscaper.Replace(s)
+	return markdownEscaper.Replace(singleLine(s))
 }
+
+// singleLine replaces the line breaks of s with spaces.
+func singleLine(s string) string {
+	return lineBreaks.Replace(s)
+}
+
+var lineBreaks = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
 
 var markdownEscaper = strings.NewReplacer(
 	`\`, `\\`, "`", "\\`", "*", `\*`, "_", `\_`, "[", `\[`, "]", `\]`, "<", `\<`, ">", `\>`, "#", `\#`, "|", `\|`,

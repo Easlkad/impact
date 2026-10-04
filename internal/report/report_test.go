@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"slices"
 	"strings"
@@ -382,8 +383,75 @@ func TestMarkdownEscaping(t *testing.T) {
 	if got := escape("a_b *c* <d> [e] #f |g|"); got != `a\_b \*c\* \<d\> \[e\] \#f \|g\|` {
 		t.Errorf("escape = %q", got)
 	}
-	if got := code("x`y"); got != "`` x`y ``" {
+	if got := code("x`y"); got != "``x`y``" { // see TestMarkdownCode
 		t.Errorf("code = %q", got)
+	}
+}
+
+// readCodeSpan reads a code span at the start of s by CommonMark's rules
+// and returns its content and what follows it.
+func readCodeSpan(s string) (content, rest string, ok bool) {
+	n := len(s) - len(strings.TrimLeft(s, "`"))
+	if n == 0 {
+		return "", "", false
+	}
+	for i := n; i < len(s); {
+		if s[i] != '`' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] == '`' {
+			j++
+		}
+		if j-i == n { // a closing run of the same length
+			content = strings.ReplaceAll(s[n:i], "\n", " ")
+			if len(content) >= 2 && content[0] == ' ' && content[len(content)-1] == ' ' && strings.Trim(content, " ") != "" {
+				content = content[1 : len(content)-1]
+			}
+			return content, s[j:], true
+		}
+		i = j
+	}
+	return "", "", false
+}
+
+func TestMarkdownCode(t *testing.T) {
+	for in, want := range map[string]string{
+		"a":                     "`a`",
+		"a`b":                   "``a`b``",
+		"a``b":                  "```a``b```",
+		"`a":                    "`` `a ``",
+		"a`":                    "`` a` ``",
+		" a":                    "`  a `",
+		"  ":                    "`  `",
+		"a\nb":                  "`a b`",
+		"a\r\nb":                "`a b`",
+		"":                      "` `",
+		"x``](https://evil) [y": "```x``](https://evil) [y```",
+	} {
+		if got := code(in); got != want {
+			t.Errorf("code(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// Whatever the input, the code span holds all of it (line breaks
+	// shown as spaces) and nothing follows it.
+	rng := rand.New(rand.NewSource(1))
+	for range 2000 {
+		var b strings.Builder
+		for range rng.Intn(12) {
+			b.WriteByte("` a\n]"[rng.Intn(5)])
+		}
+		in := b.String()
+		content, rest, ok := readCodeSpan(code(in))
+		if want := singleLine(in); !ok || rest != "" || (content != want && in != "") {
+			t.Fatalf("code(%q) = %q reads as %q followed by %q", in, code(in), content, rest)
+		}
+	}
+
+	if got, want := escape("a\n# b"), `a \# b`; got != want {
+		t.Errorf("escape keeps a line break: %q, want %q", got, want)
 	}
 }
 
